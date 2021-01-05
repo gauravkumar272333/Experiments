@@ -1,6 +1,26 @@
+from PASCAL_VOC import load_data
+from fastestimator.op.numpyop import NumpyOp
+from fastestimator.op.numpyop.meta import Sometimes
+from fastestimator.op.numpyop.multivariate import HorizontalFlip
+from fastestimator.op.numpyop.univariate import Normalize, ReadImage
+
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model, activations, backend, layers, regularizers
 from tensorflow.keras.layers import Layer
+
+class BBoxFormat(NumpyOp):
+    def forward(self, data, state):
+        # Converting the PascalVOC data format to MSCOCO format for compatibility with YOLOv4
+        bbox = np.array(data, dtype=np.float32)
+        w = bbox[:, 2] - bbox[:, 0]
+        h = bbox[:, 1] - bbox[:, 3]
+
+        bbox[:, 0] = (bbox[:, 0] + bbox[:, 2])/2
+        bbox[:, 1] = (bbox[:, 1] + bbox[:, 3])/2
+        bbox[:, 2] = w
+        bbox[:, 3] = h
+        return bbox
 
 
 class Mish(Layer):
@@ -379,3 +399,42 @@ def YOLOv4(anchors,
     x = _PANet(x, num_classes, activation=activation2, kernel_regularizer=kernel_regularizer)
     x = YOLOv3Head(anchors=anchors, num_classes=num_classes, xysclaes=xyscales)(x)
     return x
+
+
+def get_estimator(data_dir=None,
+                  model_dir=tempfile.mkdtemp(),
+                  batch_size=4,
+                  epochs=10,
+                  max_train_steps_per_epoch=None,
+                  max_eval_steps_per_epoch=None,
+                  image_size=(608, 416, 3),
+                  num_classes=20):
+    # pipeline
+    train_ds, eval_ds = load_data(root_dir=data_dir)
+
+    pipeline = fe.Pipeline(
+        train_data=train_ds,
+        eval_data=eval_ds,
+        batch_size=batch_size,
+        ops=[
+            ReadImage(inputs="image", outputs="image"),
+            BBoxFormat(inputs="bbox", outputs="bbox"),
+            Sometimes(
+                HorizontalFlip(mode="train",
+                               image_in="image",
+                               image_out="image",
+                               bbox_in="bbox",
+                               bbox_out="bbox",
+                               bbox_params='coco')),
+            Normalize(inputs="image", outputs="image", mean=1.0, std=1.0, max_pixel_value=127.5)
+        ])
+
+    # network
+    model = fe.build(model_fn=lambda: YOLOv4(anchors = [[[12, 16], [19, 36], [40, 28]], [[36, 75], [76, 55], [72, 146]],
+                                                        [[142, 110], [192, 243], [459, 401]],],
+                                             num_classes=20,
+                                             xyscales = [1.2, 1.1, 1.05],
+                                             input_shape=image_size, ),
+                     optimizer_fn=lambda: tf.optimizers.SGD(momentum=0.9))
+
+    return None
