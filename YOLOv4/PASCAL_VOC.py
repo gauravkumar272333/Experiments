@@ -104,7 +104,26 @@ def load_data(root_dir: Optional[str] = None) -> Tuple[CSVDataset, CSVDataset]:
         # extract
         print("\nExtracting files ...")
         with tarfile.open(compressed_path) as tar_file:
-            tar_file.extractall(root_dir)
+            def is_within_directory(directory, target):
+                
+                abs_directory = os.path.abspath(directory)
+                abs_target = os.path.abspath(target)
+            
+                prefix = os.path.commonprefix([abs_directory, abs_target])
+                
+                return prefix == abs_directory
+            
+            def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+            
+                for member in tar.getmembers():
+                    member_path = os.path.join(path, member.name)
+                    if not is_within_directory(path, member_path):
+                        raise Exception("Attempted Path Traversal in Tar File")
+            
+                tar.extractall(path, members, numeric_owner=numeric_owner) 
+                
+            
+            safe_extract(tar_file, root_dir)
 
     train_path = os.path.join(root_dir, "VOCdevkit/VOC2012/ImageSets/Main/train.txt")
     val_path = os.path.join(root_dir, "VOCdevkit/VOC2012/ImageSets/Main/val.txt")
